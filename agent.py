@@ -1,6 +1,7 @@
 import json
 from dotenv import load_dotenv
 from anthropic import Anthropic
+from knowledge import get_property, format_for_prompt
 
 load_dotenv()
 client = Anthropic()
@@ -48,12 +49,15 @@ def _extract_json(text):
     return obj
 
 
-def handle_message(guest_message):
+def handle_message(guest_message, property_name=None):
+    property_block = format_for_prompt(get_property(property_name)) if property_name else "no property data available"
+    full_system = f"{SYSTEM_PROMPT}\n\n{property_block}"
+
     response = client.messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=600,
         temperature=0,
-        system=SYSTEM_PROMPT,
+        system=full_system,
         messages=[{"role": "user", "content": guest_message}],
     )
     return _extract_json(response.content[0].text)
@@ -61,4 +65,4 @@ def handle_message(guest_message):
 
 if __name__ == "__main__":
     test = "Hi! What time is check-in, and is there parking?"
-    print(json.dumps(handle_message(test), indent=2))
+    print(json.dumps(handle_message(test, property_name="Pelican Beach 1006"), indent=2))
