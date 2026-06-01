@@ -44,11 +44,64 @@ def format_for_prompt(prop):
         f"- Supplies: {prop['supply_policy']}"
     )
 
+def verify_booking(booking_id, guest_last_name):
+    """
+    Check if a booking is valid for releasing codes.
+    Returns one of:
+      'confirmed'   — booking exists, name matches, check-in is today or tomorrow → safe to release codes
+      'too_early'   — booking exists and matches but check-in is more than 2 days out
+      'mismatch'    — booking_id exists but last name doesn't match
+      'not_found'   — no booking with that id
+      'cancelled'   — booking exists but is cancelled
+    """
+    with psycopg.connect(os.environ["DATABASE_URL"]) as conn:
+        row = conn.execute(
+            "SELECT guest_last_name, status, check_in_date "
+            "FROM bookings WHERE booking_id = %s",
+            (booking_id,),
+        ).fetchone()
+
+    if row is None:
+        return "not_found"
+
+    stored_name, status, check_in_date = row
+
+    if status == "cancelled":
+        return "cancelled"
+    if stored_name.lower() != guest_last_name.lower():
+        return "mismatch"
+
+    from datetime import date
+    days_until = (check_in_date - date.today()).days
+    if days_until > 2:
+        return "too_early"
+
+    return "confirmed"
+
+
+def get_access_codes(property_name):
+    """Return door_code and building_code for a property. Only call after verify_booking == 'confirmed'."""
+    with psycopg.connect(os.environ["DATABASE_URL"]) as conn:
+        row = conn.execute(
+            "SELECT door_code, building_code FROM properties WHERE name = %s",
+            (property_name,),
+        ).fetchone()
+    if row is None:
+        return None
+    return {"door_code": row[0], "building_code": row[1]}
+
 
 if __name__ == "__main__":
-    # quick test: fetch and print one property
-    prop = get_property("Pelican Beach 1006")
-    print(format_for_prompt(prop))
+    # property lookup
+    print(format_for_prompt(get_property("Pelican Beach 1006")))
     print()
-    print("Missing property test:")
-    print(format_for_prompt(get_property("Nonexistent")))
+
+    # verification tests
+    print("BKG-001 / Smith   (happy path):  ", verify_booking("BKG-001", "Smith"))
+    print("BKG-001 / Jones   (mismatch):    ", verify_booking("BKG-001", "Jones"))
+    print("BKG-002 / Johnson (too early):   ", verify_booking("BKG-002", "Johnson"))
+    print("BKG-003 / Davis   (cancelled):   ", verify_booking("BKG-003", "Davis"))
+    print("BKG-999 / Smith   (not found):   ", verify_booking("BKG-999", "Smith"))
+    print()
+    print("Codes for Pelican Beach 1006:   ", get_access_codes("Pelican Beach 1006"))
+

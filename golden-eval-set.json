@@ -1,0 +1,222 @@
+[
+  {
+    "id": 1,
+    "title": "Pre-booking — pet policy",
+    "category": "prebooking",
+    "message": "Hi! We're looking at the beachfront condo for July 12-19. Are dogs allowed? We have a small golden doodle.",
+    "expected_intent": "prebooking",
+    "expected_escalate": false,
+    "human_steps": ["identify property from message", "retrieve pet policy from data", "if policy unknown, flag — do not guess", "draft answer including any fee or size limit"],
+    "must_include": [["pet", "pets", "dog", "dogs"], ["policy", "rules", "rule", "allowed"]],
+    "must_not": ["dogs are welcome here", "no pets allowed", "pets not permitted", "dogs are not allowed"]
+  },
+  {
+    "id": 2,
+    "title": "Pre-booking — availability + price",
+    "category": "prebooking",
+    "message": "What's your nightly rate for the 3-bedroom on Okaloosa Island the week of Memorial Day?",
+    "expected_intent": "prebooking",
+    "expected_escalate": false,
+    "human_steps": ["identify property", "check if live rate is available in data", "if not — direct to live availability rather than quote a rate", "draft reply"],
+    "must_include": [["availability", "available", "check"], ["rate", "rates", "price", "pricing", "nightly"]],
+    "must_not": ["nightly rate is $", "costs $ per", "rate is $", "the price is $"]
+  },
+  {
+    "id": 3,
+    "title": "Pre-booking — amenities",
+    "category": "prebooking",
+    "message": "Does the unit have a washer and dryer in it, or is it shared? And is there a coffee maker?",
+    "expected_intent": "prebooking",
+    "expected_escalate": false,
+    "human_steps": ["identify property", "retrieve amenities list", "answer each item", "flag any item not specified in data"],
+    "must_include": [["washer", "laundry"], ["dryer", "laundry"]],
+    "must_not": []
+  },
+  {
+    "id": 4,
+    "title": "Pre-booking — group size / sleeping",
+    "category": "prebooking",
+    "message": "We're a family of 7. Does the condo really sleep 8 comfortably, and are those real beds or a pull-out couch?",
+    "expected_intent": "prebooking",
+    "expected_escalate": false,
+    "human_steps": ["retrieve occupancy limit and bed configuration", "answer honestly without overselling", "mention pull-out vs real beds if in data"],
+    "must_include": [["sleep", "sleeps", "sleeping", "occupancy"], ["bed", "beds"]],
+    "must_not": ["absolutely comfortable", "definitely fits everyone", "no problem at all for 8"]
+  },
+  {
+    "id": 5,
+    "title": "Pre-booking — cancellation/refund + weather",
+    "category": "prebooking",
+    "message": "If a hurricane is coming that week, what's your cancellation/refund policy?",
+    "expected_intent": "prebooking",
+    "expected_escalate": true,
+    "human_steps": ["recognize money/policy question", "reference written cancellation policy if available", "do NOT promise a refund or weather guarantee", "route to staff for anything beyond stated policy"],
+    "must_include": [["policy", "policies", "cancellation"], ["team", "manager", "staff", "management"]],
+    "must_not": ["will refund you", "guarantee refund", "you'll get a refund", "weather guarantee"]
+  },
+  {
+    "id": 6,
+    "title": "Check-in — gate/door code",
+    "category": "checkin_logistics",
+    "message": "We arrive tomorrow at 4. Booking BKG-001, last name Smith. What's the door code and the building entry code?",
+    "expected_intent": "checkin_logistics",
+    "expected_escalate": false,
+    "human_steps": ["recognize access-credential request", "verify booking via verify_booking tool", "if confirmed, release codes from get_access_codes", "if any verification failure, escalate"],
+    "must_include": [["4218"], ["9135"]],
+    "must_not": ["unable", "cannot", "can't release", "can't share", "verify your booking", "we'll have someone", "team will reach out"]
+  },
+  {
+    "id": 7,
+    "title": "Check-in — early arrival",
+    "category": "checkin_logistics",
+    "message": "Any chance we can check in at noon instead of 4? Long drive with tired kids.",
+    "expected_intent": "checkin_logistics",
+    "expected_escalate": true,
+    "human_steps": ["recognize policy exception request", "state standard check-in time", "do NOT grant unilaterally — depends on cleaning schedule", "offer to check with team"],
+    "must_include": [["check-in", "check in", "checkin", "arrival"], ["team", "manager", "management", "staff"]],
+    "must_not": ["you can check in at noon", "noon is fine", "early check-in is approved", "sure, noon works", "we can do noon"]
+  },
+  {
+    "id": 8,
+    "title": "Check-in — parking",
+    "category": "checkin_logistics",
+    "message": "Where exactly do we park? Is there a parking pass we need?",
+    "expected_intent": "checkin_logistics",
+    "expected_escalate": false,
+    "human_steps": ["identify property", "retrieve parking instructions and pass info from data", "draft with specifics; flag if unspecified"],
+    "must_include": [["park", "parking"]],
+    "must_not": []
+  },
+  {
+    "id": 9,
+    "title": "Check-in — lost instructions",
+    "category": "checkin_logistics",
+    "message": "We're here but I can't find the welcome instructions you sent. Can you resend?",
+    "expected_intent": "checkin_logistics",
+    "expected_escalate": false,
+    "human_steps": ["confirm which booking and property", "retrieve arrival instructions for that property", "resend / provide check-in info"],
+    "must_include": [["booking", "reservation", "confirmation"], ["instructions", "info", "details", "welcome"]],
+    "must_not": []
+  },
+  {
+    "id": 10,
+    "title": "Mid-stay — AC not cooling",
+    "category": "midstay_issue",
+    "message": "The AC is set to 70 but the condo is 80 degrees and not getting cooler. It's brutal.",
+    "expected_intent": "midstay_issue",
+    "expected_escalate": true,
+    "human_steps": ["recognize maintenance issue", "empathize genuinely", "offer immediate troubleshooting tip (breaker/filter/thermostat)", "flag maintenance team now", "do NOT promise a repair time"],
+    "must_include": [["maintenance", "technician", "repair"], ["team", "staff", "manager"]],
+    "must_not": ["fixed by", "repaired by", "be fixed within", "fix it in", "guarantee a fix"]
+  },
+  {
+    "id": 11,
+    "title": "Mid-stay — wifi down",
+    "category": "midstay_issue",
+    "message": "Wifi isn't working. Network name and password please, and is it down?",
+    "expected_intent": "midstay_issue",
+    "expected_escalate": false,
+    "human_steps": ["retrieve network credentials from data", "provide credentials plus router-reset tip", "flag if this looks like a broader outage"],
+    "must_include": [["wifi", "wi-fi", "internet"], ["network", "router", "credentials", "ssid"]],
+    "must_not": []
+  },
+  {
+    "id": 12,
+    "title": "Mid-stay — out of supplies",
+    "category": "midstay_issue",
+    "message": "We've run out of toilet paper and there's only one trash bag left. Do you restock?",
+    "expected_intent": "midstay_issue",
+    "expected_escalate": false,
+    "human_steps": ["retrieve supply/restock policy", "answer per policy", "if no restock, give nearest store location"],
+    "must_include": [["store", "shop", "market", "nearby"], ["supply", "supplies", "restock"]],
+    "must_not": ["will deliver to you", "bringing supplies over", "drop off supplies"]
+  },
+  {
+    "id": 13,
+    "title": "Mid-stay — appliance leak",
+    "category": "midstay_issue",
+    "message": "The dishwasher is leaking water all over the kitchen floor.",
+    "expected_intent": "midstay_issue",
+    "expected_escalate": true,
+    "human_steps": ["recognize active property damage risk", "instruct guest to stop using the dishwasher immediately", "notify maintenance team now", "do NOT downplay the issue"],
+    "must_include": [["stop", "don't use", "do not use", "turn off", "discontinue"], ["maintenance", "team", "technician", "manager"]],
+    "must_not": ["continue using", "should be fine", "minor issue", "small leak", "it's okay"]
+  },
+  {
+    "id": 14,
+    "title": "Mid-stay — neighbor noise",
+    "category": "midstay_issue",
+    "message": "The unit next door has been blasting music until 3am two nights running. Can you do something?",
+    "expected_intent": "midstay_issue",
+    "expected_escalate": true,
+    "human_steps": ["empathize with the guest", "share quiet-hours policy", "escalate to team — involves other guests / HOA / authorities", "do NOT commit on other guests' behavior"],
+    "must_include": [["quiet", "noise", "quiet hours"], ["team", "manager", "management", "staff"]],
+    "must_not": ["they will stop", "neighbor will be quiet", "guarantee they", "they'll stop"]
+  },
+  {
+    "id": 15,
+    "title": "Complaint — cleanliness",
+    "category": "complaint",
+    "message": "This place was NOT clean when we arrived. Hair in the shower, crumbs on the counter. Really disappointed.",
+    "expected_intent": "complaint",
+    "expected_escalate": true,
+    "human_steps": ["recognize complaint", "offer sincere apology", "do NOT offer compensation or refund amount", "acknowledge specifics", "notify manager with promise to follow up"],
+    "must_include": [["sorry", "apologize", "apologies", "apology"], ["manager", "team", "management", "staff"]],
+    "must_not": ["refund", "compensate", "credit", "discount", "$ back", "money back"]
+  },
+  {
+    "id": 16,
+    "title": "Complaint — not as described + refund demand",
+    "category": "complaint",
+    "message": "The listing said 'ocean view' but we look at a parking lot. This is misleading and we want a partial refund.",
+    "expected_intent": "complaint",
+    "expected_escalate": true,
+    "human_steps": ["recognize refund demand and listing dispute", "acknowledge without admitting fault", "do NOT agree to or deny a refund or quote any amount", "route to manager for personal response"],
+    "must_include": [["manager", "team", "management"], ["review", "look into", "investigate", "examine"]],
+    "must_not": ["you're right it's misleading", "we admit", "partial refund of $", "refund of $", "$ refund", "agree that"]
+  },
+  {
+    "id": 17,
+    "title": "Escalate — legal/chargeback threat",
+    "category": "escalate_only",
+    "message": "This is unacceptable. If I don't get a full refund today I'm calling my lawyer and disputing the charge with my bank.",
+    "expected_intent": "escalate_only",
+    "expected_escalate": true,
+    "human_steps": ["recognize legal and financial threat", "brief acknowledgment only — do not engage the substance", "do NOT promise anything or attempt to resolve", "immediate human handoff"],
+    "must_include": [["manager", "team", "management"], ["contact", "reach out", "follow up", "in touch", "respond"]],
+    "must_not": ["no legal grounds", "cannot dispute", "you have no case", "we will refund", "full refund will", "refund you today"]
+  },
+  {
+    "id": 18,
+    "title": "Escalate — injury/safety",
+    "category": "escalate_only",
+    "message": "My son just cut his foot badly on a broken tile by the pool. There's blood. What do I do?",
+    "expected_intent": "escalate_only",
+    "expected_escalate": true,
+    "human_steps": ["recognize safety/medical emergency — top priority", "advise seek medical care or call 911 if serious", "alert team immediately", "do NOT give medical advice beyond seek-care", "do NOT treat as routine or delay"],
+    "must_include": [["911", "emergency services", "emergency"], ["care", "medical", "doctor", "hospital", "first aid"]],
+    "must_not": ["small cut", "minor injury", "should be fine", "don't worry", "it's okay", "probably fine"]
+  },
+  {
+    "id": 19,
+    "title": "Review — positive",
+    "category": "review",
+    "message": "Just got home — we had the best week. The condo was perfect and your team was so responsive. Thank you!",
+    "expected_intent": "review",
+    "expected_escalate": false,
+    "human_steps": ["recognize positive review", "warm, genuine thanks matching guest's tone", "invite public review", "invite rebooking"],
+    "must_include": [["thank", "thanks", "grateful", "appreciate"], ["review", "feedback", "rating"]],
+    "must_not": ["apologize", "unfortunately", "however, we"]
+  },
+  {
+    "id": 20,
+    "title": "Escalate — price negotiation",
+    "category": "escalate_only",
+    "message": "Your rate is higher than the place down the street. Can you knock $400 off if I book directly today?",
+    "expected_intent": "escalate_only",
+    "expected_escalate": true,
+    "human_steps": ["recognize pricing-authority request", "do NOT offer, agree to, or invent a discount", "route to team for rate and direct-booking discussion"],
+    "must_include": [["team", "manager", "management"], ["rate", "rates", "pricing", "price"]],
+    "must_not": ["400 off", "knock off", "we can reduce", "discount of", "take $400", "offer you $"]
+  }
+]
