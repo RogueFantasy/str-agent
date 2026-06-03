@@ -1,10 +1,31 @@
 import json
+import re
+import time
 from dotenv import load_dotenv
 from anthropic import Anthropic
 from knowledge import get_property, format_for_prompt, verify_booking, get_access_codes
 
 load_dotenv()
 client = Anthropic()
+
+FORBIDDEN = [r"\$\s?\d"]   # dollar amounts only — the model handles refund language via intent
+CODE_LEAK = re.compile(r"\bcode\b.{0,40}\b\d{4}\b", re.IGNORECASE)
+
+
+def _guard(result, codes_released):
+    """Force escalation if the draft contains forbidden content."""
+    if result.get("should_escalate"):
+        return result
+    draft = result.get("draft_response", "")
+    leak = next((p for p in FORBIDDEN if re.search(p, draft, re.IGNORECASE)), None)
+    if not leak and not codes_released and CODE_LEAK.search(draft):
+        leak = "unverified code"
+    if leak:
+        result["should_escalate"] = True
+        result["draft_response"] = ""
+        result.setdefault("sources_used", []).append(f"output_guard: {leak}")
+    return result
+
 
 SYSTEM_PROMPT = """You are a vacation rental assistant. Classify and respond to guest messages.
 
@@ -109,51 +130,52 @@ def _extract_json(text):
 
 
 def handle_message(guest_message):
-    messages = [{"role": "user", "content": guest_message}]
+    if not guest_message or not guest_message.strip() or len(guest_message) > 4000:
+        return {"intent": "escalate_only", "should_escalate": True, "draft_response": "",
+                "sources_used": ["input_guard"], "steps_taken": ["bad input — escalated"]}
 
-    # Agent loop: keep calling until the model produces a final answer (no more tool calls).
-    # Hard cap to prevent runaway loops — a failure harness.
+    messages = [{"role": "user", "content": guest_message}]
+    codes_released = False
+
     for _ in range(5):
-        response = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=600,
-            temperature=0,
-            system=SYSTEM_PROMPT,
-            tools=TOOLS,
-            messages=messages,
-        )
+        for attempt in range(3):
+            try:
+                response = client.messages.create(
+                    model="claude-haiku-4-5-20251001",
+                    max_tokens=600, temperature=0,
+                    system=SYSTEM_PROMPT, tools=TOOLS, messages=messages,
+                )
+                break
+            except Exception:
+                time.sleep(2 ** attempt)
+        else:
+            raise RuntimeError("API failed after 3 retries")
 
         if response.stop_reason == "tool_use":
-            # Execute each tool the model asked for, send results back, loop again.
             tool_results = []
             for block in response.content:
                 if block.type != "tool_use":
                     continue
-
                 if block.name == "get_property":
                     result_text = format_for_prompt(get_property(block.input["name"]))
                 elif block.name == "verify_booking":
                     result_text = verify_booking(block.input["booking_id"], block.input["guest_last_name"])
                 elif block.name == "get_access_codes":
                     codes = get_access_codes(block.input["name"])
+                    if codes:
+                        codes_released = True
                     result_text = str(codes) if codes else "no codes available"
                 else:
                     result_text = f"unknown tool: {block.name}"
-
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": result_text,
-                })
+                tool_results.append({"type": "tool_result", "tool_use_id": block.id, "content": result_text})
             messages.append({"role": "assistant", "content": response.content})
             messages.append({"role": "user", "content": tool_results})
             continue
 
-        # No more tool calls — extract the final text and parse the JSON.
         for block in response.content:
             if block.type == "text":
-                return json.loads(_extract_json(block.text))
-        return {}  # safety fallback if model returned no text at all
+                return _guard(json.loads(_extract_json(block.text)), codes_released)
+        return {}
 
     raise RuntimeError("Agent exceeded max tool-call iterations")
 
