@@ -3,7 +3,7 @@ import re
 import time
 from dotenv import load_dotenv
 from anthropic import Anthropic
-from knowledge import get_property, format_for_prompt, verify_booking, get_access_codes
+from knowledge import get_property, format_for_prompt, verify_booking, get_access_codes, log_event
 
 load_dotenv()
 client = Anthropic()
@@ -31,10 +31,10 @@ SYSTEM_PROMPT = """You are a vacation rental assistant. Classify and respond to 
 
 You have three tools:
 1. get_property(name) — facts about a property (check-in, wifi, parking, pet policy, amenities, supplies).
-2. verify_booking(booking_id, guest_last_name) — verify a guest before releasing access codes. Returns 'confirmed', 'too_early', 'mismatch', 'cancelled', or 'not_found'.
+2. verify_booking(booking_id, guest_last_name) — verify a guest before releasing access codes. Returns 'confirmed', 'outside_window', 'mismatch', 'cancelled', or 'not_found'.
 3. get_access_codes(name) — door and building codes. Only call AFTER verify_booking returns 'confirmed'.
 
-Use tools as needed: call get_property when you need property facts. For ACCESS CODE requests (door codes, entry codes, gate codes), follow this exact flow: extract booking_id and guest last name from the message → call verify_booking → if 'confirmed', call get_access_codes and include codes in the draft (do NOT escalate) → if 'too_early', 'mismatch', 'cancelled', or 'not_found', escalate with a polite explanation (do not reveal which specific check failed beyond a general "we'll have someone verify and follow up").
+Use tools as needed: call get_property when you need property facts. For ACCESS CODE requests (door codes, entry codes, gate codes), follow this exact flow: extract booking_id and guest last name from the message → call verify_booking → if 'confirmed', call get_access_codes and include codes in the draft (do NOT escalate) → if 'outside_window', 'mismatch', 'cancelled', or 'not_found', escalate with a polite explanation (do not reveal which specific check failed beyond a general "we'll have someone verify and follow up").
 
 If the message has a [Booking: <name>] prefix, that's the property name. If a booking_id appears in the message (format like BKG-NNN), use it.
 
@@ -53,12 +53,13 @@ DRAFT LANGUAGE RULES:
 - For complaints, apologize using "sorry" and reference a "manager" or "team" who will follow up.
 - For maintenance dispatch (AC, leaks), name "maintenance" and "the team."
 - If you cannot restock or fulfill a supply request, use the word "store" or "shop" (e.g. "the nearest store") — do not just name a brand without the category word.
-- For check-in logistics where a guest has lost or requests arrival instructions, reference their "booking" or "reservation" when providing the information (e.g. "Here are your check-in details for your reservation").
+- For check-in logistics where a guest has lost or requests arrival instructions, you MUST include the word "booking" or "reservation" in your draft (e.g. "Here are your check-in details for your reservation").
 - For legal/chargeback threats, briefly acknowledge and say a "manager" will "contact" them — nothing else.
 - For wifi/internet not working during a stay: do NOT escalate. Provide network credentials and a router-reset tip; only flag for the team if the reset fails or the guest reports a building-wide outage.
 - For positive reviews: thank the guest warmly AND invite them to leave a public "review" on the booking platform.
+- For safety/medical emergencies: use intent escalate_only; in the draft, advise calling 911 AND seeking medical care or first aid immediately, then notify the team.
 
-HARD CONSTRAINTS: never state rates/codes/policies not given to you; never release codes without verifying booking; never grant exceptions unilaterally; never promise repair times; never offer or imply refunds; never engage legal threats beyond handoff; for safety advise 911 first.
+HARD CONSTRAINTS: never state rates/codes/policies not given to you; never release codes without verifying booking; never grant exceptions unilaterally; never promise repair times; never offer or imply refunds; never engage legal threats beyond handoff.
 
 Return ONLY a JSON object, no markdown, no preamble:
 {
@@ -91,7 +92,7 @@ TOOLS = [
         "name": "verify_booking",
         "description": (
             "Verify a guest's booking before releasing sensitive info (door/building codes). "
-            "Returns one of: 'confirmed' (safe to release codes), 'too_early' (check-in is more than 2 days away), "
+            "Returns one of: 'confirmed' (safe to release codes), 'outside_window' (check-in is more than 2 days away), "
             "'mismatch' (last name doesn't match), 'cancelled', or 'not_found'. "
             "Always call this BEFORE get_access_codes. Required inputs: booking_id and guest_last_name from the message."
         ),
@@ -131,13 +132,18 @@ def _extract_json(text):
 
 def handle_message(guest_message):
     if not guest_message or not guest_message.strip() or len(guest_message) > 4000:
-        return {"intent": "escalate_only", "should_escalate": True, "draft_response": "",
-                "sources_used": ["input_guard"], "steps_taken": ["bad input — escalated"]}
+        result = {"intent": "escalate_only", "should_escalate": True, "draft_response": "",
+                  "sources_used": ["input_guard"], "steps_taken": ["bad input — escalated"]}
+        log_event(guest_message or "", result, [], 0, False)
+        return result
 
     messages = [{"role": "user", "content": guest_message}]
     codes_released = False
+    tools_used = []
+    iterations = 0
 
     for _ in range(5):
+        iterations += 1
         for attempt in range(3):
             try:
                 response = client.messages.create(
@@ -156,6 +162,7 @@ def handle_message(guest_message):
             for block in response.content:
                 if block.type != "tool_use":
                     continue
+                tools_used.append(block.name)
                 if block.name == "get_property":
                     result_text = format_for_prompt(get_property(block.input["name"]))
                 elif block.name == "verify_booking":
@@ -174,7 +181,10 @@ def handle_message(guest_message):
 
         for block in response.content:
             if block.type == "text":
-                return _guard(json.loads(_extract_json(block.text)), codes_released)
+                result = _guard(json.loads(_extract_json(block.text)), codes_released)
+                log_event(guest_message, result, tools_used, iterations, codes_released)
+                return result
+        log_event(guest_message, {}, tools_used, iterations, codes_released)
         return {}
 
     raise RuntimeError("Agent exceeded max tool-call iterations")

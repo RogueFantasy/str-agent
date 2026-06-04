@@ -49,7 +49,7 @@ def verify_booking(booking_id, guest_last_name):
     Check if a booking is valid for releasing codes.
     Returns one of:
       'confirmed'   — booking exists, name matches, check-in is today or tomorrow → safe to release codes
-      'too_early'   — booking exists and matches but check-in is more than 2 days out
+      'outside_window'   — booking exists and matches but check-in is more than 2 days out
       'mismatch'    — booking_id exists but last name doesn't match
       'not_found'   — no booking with that id
       'cancelled'   — booking exists but is cancelled
@@ -73,8 +73,8 @@ def verify_booking(booking_id, guest_last_name):
 
     from datetime import date
     days_until = (check_in_date - date.today()).days
-    if days_until > 2:
-        return "too_early"
+    if days_until < 0 or days_until > 2:
+        return "outside_window"
 
     return "confirmed"
 
@@ -89,6 +89,28 @@ def get_access_codes(property_name):
     if row is None:
         return None
     return {"door_code": row[0], "building_code": row[1]}
+
+
+def log_event(guest_message, result, tools_used, iterations, codes_released):
+    """Append one row to agent_log. Best-effort — never let a logging failure crash the agent."""
+    try:
+        with psycopg.connect(os.environ["DATABASE_URL"], autocommit=True) as conn:
+            conn.execute(
+                "INSERT INTO agent_log "
+                "(guest_message, intent, should_escalate, draft_response, tools_used, iterations, codes_released) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                (
+                    guest_message,
+                    result.get("intent"),
+                    result.get("should_escalate"),
+                    result.get("draft_response"),
+                    ",".join(tools_used) if tools_used else None,
+                    iterations,
+                    codes_released,
+                ),
+            )
+    except Exception as e:
+        print(f"[log_event failed: {e}]")
 
 
 if __name__ == "__main__":
