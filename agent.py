@@ -130,7 +130,57 @@ def _extract_json(text):
     return text
 
 
+def _call_with_retry(messages):
+    """API call with 3-attempt exponential backoff. Returns response or raises."""
+    for attempt in range(3):
+        try:
+            return client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=600, temperature=0,
+                system=SYSTEM_PROMPT, tools=TOOLS, messages=messages,
+            )
+        except Exception:
+            time.sleep(2 ** attempt)
+    raise RuntimeError("API failed after 3 retries")
+
+
+def _run_tool(name, args):
+    """Dispatch one tool call. Returns (result_text, released_codes)."""
+    if name == "get_property":
+        return format_for_prompt(get_property(args["name"])), False
+    if name == "verify_booking":
+        return verify_booking(args["booking_id"], args["guest_last_name"]), False
+    if name == "get_access_codes":
+        codes = get_access_codes(args["name"])
+        return (str(codes) if codes else "no codes available"), bool(codes)
+    return f"unknown tool: {name}", False
+
+
+def _process_tool_calls(response, messages):
+    """Run every tool_use block. Mutates messages. Returns (names, any_codes_released)."""
+    tool_results, names, codes_released = [], [], False
+    for block in response.content:
+        if block.type != "tool_use":
+            continue
+        names.append(block.name)
+        result_text, released = _run_tool(block.name, block.input)
+        codes_released = codes_released or released
+        tool_results.append({"type": "tool_result", "tool_use_id": block.id, "content": result_text})
+    messages.append({"role": "assistant", "content": response.content})
+    messages.append({"role": "user", "content": tool_results})
+    return names, codes_released
+
+
+def _extract_final(response, codes_released):
+    """Find the text block and return the guarded result dict, or None."""
+    for block in response.content:
+        if block.type == "text":
+            return _guard(json.loads(_extract_json(block.text)), codes_released)
+    return None
+
+
 def handle_message(guest_message):
+    """Run the agent on one guest message. Returns a decision dict with intent, escalate, draft, and _usage."""
     if not guest_message or not guest_message.strip() or len(guest_message) > 4000:
         result = {"intent": "escalate_only", "should_escalate": True, "draft_response": "",
                   "sources_used": ["input_guard"], "steps_taken": ["bad input — escalated"]}
@@ -138,54 +188,29 @@ def handle_message(guest_message):
         return result
 
     messages = [{"role": "user", "content": guest_message}]
-    codes_released = False
-    tools_used = []
-    iterations = 0
+    tools_used, iterations, codes_released = [], 0, False
+    input_tokens, output_tokens = 0, 0
 
     for _ in range(5):
         iterations += 1
-        for attempt in range(3):
-            try:
-                response = client.messages.create(
-                    model="claude-haiku-4-5-20251001",
-                    max_tokens=600, temperature=0,
-                    system=SYSTEM_PROMPT, tools=TOOLS, messages=messages,
-                )
-                break
-            except Exception:
-                time.sleep(2 ** attempt)
-        else:
-            raise RuntimeError("API failed after 3 retries")
+        response = _call_with_retry(messages)
+        input_tokens += response.usage.input_tokens
+        output_tokens += response.usage.output_tokens
 
         if response.stop_reason == "tool_use":
-            tool_results = []
-            for block in response.content:
-                if block.type != "tool_use":
-                    continue
-                tools_used.append(block.name)
-                if block.name == "get_property":
-                    result_text = format_for_prompt(get_property(block.input["name"]))
-                elif block.name == "verify_booking":
-                    result_text = verify_booking(block.input["booking_id"], block.input["guest_last_name"])
-                elif block.name == "get_access_codes":
-                    codes = get_access_codes(block.input["name"])
-                    if codes:
-                        codes_released = True
-                    result_text = str(codes) if codes else "no codes available"
-                else:
-                    result_text = f"unknown tool: {block.name}"
-                tool_results.append({"type": "tool_result", "tool_use_id": block.id, "content": result_text})
-            messages.append({"role": "assistant", "content": response.content})
-            messages.append({"role": "user", "content": tool_results})
+            names, released = _process_tool_calls(response, messages)
+            tools_used.extend(names)
+            codes_released = codes_released or released
             continue
 
-        for block in response.content:
-            if block.type == "text":
-                result = _guard(json.loads(_extract_json(block.text)), codes_released)
-                log_event(guest_message, result, tools_used, iterations, codes_released)
-                return result
-        log_event(guest_message, {}, tools_used, iterations, codes_released)
-        return {}
+        result = _extract_final(response, codes_released)
+        if result is not None:
+            result["_usage"] = {"input_tokens": input_tokens, "output_tokens": output_tokens}
+            log_event(guest_message, result, tools_used, iterations, codes_released)
+            return result
+        result = {"_usage": {"input_tokens": input_tokens, "output_tokens": output_tokens}}
+        log_event(guest_message, result, tools_used, iterations, codes_released)
+        return result
 
     raise RuntimeError("Agent exceeded max tool-call iterations")
 

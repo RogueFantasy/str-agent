@@ -1,3 +1,4 @@
+import time
 import json
 from agent import handle_message
 
@@ -6,10 +7,21 @@ with open("golden-eval-set.json") as f:
     cases = json.load(f)
 
 # --- Step 2: loop over each case and score it ---
+INPUT_PRICE = 0.80 / 1_000_000
+OUTPUT_PRICE = 4.00 / 1_000_000
+total_cost = 0.0
+total_latency = 0.0
 passed = 0
 
 for case in cases:
-    result = handle_message(case["message"], property_name="Pelican Beach 1006")
+    contextual = f"[Booking: Pelican Beach 1006]\n{case['message']}"
+    t0 = time.perf_counter()
+    result = handle_message(contextual)
+    latency_s = time.perf_counter() - t0
+    usage = result.get("_usage", {}) or {}
+    cost_usd = usage.get("input_tokens", 0) * INPUT_PRICE + usage.get("output_tokens", 0) * OUTPUT_PRICE
+    total_cost += cost_usd
+    total_latency += latency_s
 
     intent = result.get("intent")
     escalate = result.get("should_escalate")
@@ -37,7 +49,7 @@ for case in cases:
         passed += 1
 
     mark = "PASS" if case_passed else "FAIL"
-    print(f"[{mark}] case {case['id']:>2}: {case['title']}")
+    print(f"[{mark}] case {case['id']:>2}: {case['title']}  ({latency_s:.2f}s  ${cost_usd:.5f})")
     if not case_passed:
         if not intent_ok:    print(f"         intent: got {intent}, expected {case['expected_intent']}")
         if not escalate_ok:  print(f"         escalate: got {escalate}, expected {case['expected_escalate']}")
@@ -51,3 +63,4 @@ for case in cases:
 
 # --- Step 4: print the final tally ---
 print(f"\n{passed}/{len(cases)} cases passed")
+print(f"total cost: ${total_cost:.4f}   per-message avg: ${total_cost/len(cases):.5f}   avg latency: {total_latency/len(cases):.2f}s")
