@@ -113,6 +113,30 @@ def log_event(guest_message, result, tools_used, iterations, codes_released):
         print(f"[log_event failed: {e}]")
 
 
+def load_conversation(conversation_id, max_turns=10):
+    """Load the last N turns of a conversation, oldest first. Returns list of {role, content} dicts."""
+    with psycopg.connect(os.environ["DATABASE_URL"]) as conn:
+        rows = conn.execute(
+            "SELECT role, content FROM conversations "
+            "WHERE conversation_id = %s "
+            "ORDER BY ts DESC LIMIT %s",
+            (conversation_id, max_turns),
+        ).fetchall()
+    return [{"role": r, "content": c} for r, c in reversed(rows)]
+
+
+def save_turn(conversation_id, role, content):
+    """Append one turn to the conversation. Fails open."""
+    try:
+        with psycopg.connect(os.environ["DATABASE_URL"], autocommit=True) as conn:
+            conn.execute(
+                "INSERT INTO conversations (conversation_id, role, content) VALUES (%s, %s, %s)",
+                (conversation_id, role, content),
+            )
+    except Exception as e:
+        print(f"[save_turn failed: {e}]")
+
+
 if __name__ == "__main__":
     # property lookup
     print(format_for_prompt(get_property("Pelican Beach 1006")))

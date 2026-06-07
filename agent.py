@@ -3,7 +3,7 @@ import re
 import time
 from dotenv import load_dotenv
 from anthropic import Anthropic
-from knowledge import get_property, format_for_prompt, verify_booking, get_access_codes, log_event
+from knowledge import get_property, format_for_prompt, verify_booking, get_access_codes, log_event, load_conversation, save_turn
 
 load_dotenv()
 client = Anthropic()
@@ -179,7 +179,7 @@ def _extract_final(response, codes_released):
     return None
 
 
-def handle_message(guest_message):
+def handle_message(guest_message, conversation_id=None):
     """Run the agent on one guest message. Returns a decision dict with intent, escalate, draft, and _usage."""
     if not guest_message or not guest_message.strip() or len(guest_message) > 4000:
         result = {"intent": "escalate_only", "should_escalate": True, "draft_response": "",
@@ -187,7 +187,8 @@ def handle_message(guest_message):
         log_event(guest_message or "", result, [], 0, False)
         return result
 
-    messages = [{"role": "user", "content": guest_message}]
+    history = load_conversation(conversation_id) if conversation_id else []
+    messages = history + [{"role": "user", "content": guest_message}]
     tools_used, iterations, codes_released = [], 0, False
     input_tokens, output_tokens = 0, 0
 
@@ -205,6 +206,9 @@ def handle_message(guest_message):
 
         result = _extract_final(response, codes_released)
         if result is not None:
+            if conversation_id:
+                save_turn(conversation_id, "user", guest_message)
+                save_turn(conversation_id, "assistant", json.dumps(result))
             result["_usage"] = {"input_tokens": input_tokens, "output_tokens": output_tokens}
             log_event(guest_message, result, tools_used, iterations, codes_released)
             return result
