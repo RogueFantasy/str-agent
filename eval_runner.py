@@ -1,6 +1,8 @@
 import time
 import json
 from agent import handle_message
+from seed import seed
+seed()
 
 # --- Step 1: load the test cases ---
 with open("golden-eval-set.json") as f:
