@@ -74,7 +74,6 @@ psql "$DATABASE_URL" -f schema.sql
 Then:
 
 ```bash
-python db_test.py       # sanity-check the Postgres connection
 python seed.py          # seed bookings relative to today's date
 python eval_runner.py   # run all 20 golden cases (re-seeds automatically)
 python agent.py         # demo: one guest message through the full loop
