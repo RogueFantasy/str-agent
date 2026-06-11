@@ -1,5 +1,9 @@
+# Local stdio MCP server for the repo owner's own clients (Claude Code, Claude Desktop).
+# TRADEOFF: verify-before-release enforcement for simplicity — these tools trust the
+# caller; the booking-bound code-release flow is enforced in agent.py, not here.
+# Do not expose this server beyond a trusted local client.
 import asyncio
-from seed import seed; seed()
+from seed import seed
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
@@ -53,7 +57,7 @@ async def call_tool(name, arguments):
     if name == "get_property":
         result = format_for_prompt(get_property(arguments["name"]))
     elif name == "verify_booking":
-        result = verify_booking(arguments["booking_id"], arguments["guest_last_name"])
+        result, _ = verify_booking(arguments["booking_id"], arguments["guest_last_name"])
     elif name == "get_access_codes":
         codes = get_access_codes(arguments["name"])
         result = str(codes) if codes else "no codes available"
@@ -63,6 +67,7 @@ async def call_tool(name, arguments):
 
 
 async def main():
+    seed()  # refresh demo bookings so check-in windows stay relative to today
     async with stdio_server() as (read_stream, write_stream):
         await server.run(read_stream, write_stream, server.create_initialization_options())
 

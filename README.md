@@ -10,7 +10,7 @@ Built as a learning project: one agent, three tools, a golden eval set, and a ha
 |---|---|
 | Golden eval set | **20/20 passing** |
 | Cost per message | **$0.0048** avg |
-| Latency per message | **3.97s** avg |
+| Latency per message | **3.54s** avg |
 | Model | `claude-haiku-4-5` at temperature 0 |
 
 Cost and latency are measured by the eval runner itself on every run, so regressions in any of the three show up immediately.
@@ -44,7 +44,7 @@ guest message
 ```
 
 - **`agent.py`** — the agent loop. Classifies each message into one of six intents (`prebooking`, `checkin_logistics`, `midstay_issue`, `complaint`, `review`, `escalate_only`), decides whether to escalate, and drafts a reply under 120 words. Returns structured JSON with sources used and steps taken.
-- **`knowledge.py`** — all database access. The access-code flow is the security-critical path: `verify_booking` checks booking ID + last name + check-in window (today or tomorrow only) and returns `confirmed` / `outside_window` / `mismatch` / `cancelled` / `not_found`; codes are only released on `confirmed`. A regex output guard backstops the model: if a draft contains something code-shaped and no booking was verified this turn, the draft is discarded and the message escalates.
+- **`knowledge.py`** — all database access. The access-code flow is the security-critical path: `verify_booking` checks booking ID + last name + check-in window (today or tomorrow only) and returns `confirmed` / `outside_window` / `mismatch` / `cancelled` / `not_found`; codes are only released on `confirmed`, and only for the property the verified booking belongs to — the binding is enforced in code, not by trusting the model to pass the right property name. A regex output guard backstops the model: if a draft contains something code-shaped and no booking was verified this turn, the draft is discarded and the message escalates.
 - **`eval_runner.py`** — runs all 20 golden cases and scores four things per case: intent, escalation flag, must-include synonym groups, and must-not forbidden phrases. Prints per-case cost and latency.
 - **`golden-eval-set.json`** — 20 cases spanning all six intents, including adversarial ones (code request with wrong last name, refund demands, legal threats, hurricane cancellation questions).
 - **`seed.py`** — seeds bookings with check-in dates *relative to today*, so the verification-window tests don't rot.
@@ -85,6 +85,8 @@ To use the knowledge base from Claude Code as an MCP server:
 claude mcp add str-agent -- /path/to/venv/bin/python /path/to/str-agent/mcp_server.py
 ```
 
+The MCP server trusts its caller: it exposes the raw tools without enforcing the verify-before-release sequence (that enforcement lives in `agent.py`). It's meant for the repo owner's own local clients over stdio — don't expose it beyond that.
+
 ## Deliberately deferred (and why)
 
 These were considered and cut, not overlooked. Each stays out until the eval set or real traffic proves it's needed.
@@ -98,3 +100,7 @@ These were considered and cut, not overlooked. Each stays out until the eval set
 - **Property resolver.** Messages arrive with a `[Booking: <property name>]` prefix, mirroring how a rental platform delivers messages already attached to a listing — so the agent never guesses which property a guest means. Fuzzy resolution from free text ("the beachfront condo") is a real problem, but solving it before having real inbound message data would be guessing at the input distribution.
 
 Known gaps that are *debt*, not deferral: no migration tooling (`schema.sql` is create-only, no versioning), and `conversations` memory isn't used by the eval set yet.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

@@ -1,12 +1,14 @@
 import json
 import re
 import time
+import anthropic
 from dotenv import load_dotenv
-from anthropic import Anthropic
 from knowledge import get_property, format_for_prompt, verify_booking, get_access_codes, log_event, load_conversation, save_turn
 
 load_dotenv()
-client = Anthropic()
+client = anthropic.Anthropic()
+
+RETRYABLE_ERRORS = (anthropic.APIConnectionError, anthropic.RateLimitError, anthropic.InternalServerError)
 
 FORBIDDEN = [r"\$\s?\d"]   # dollar amounts only — the model handles refund language via intent
 CODE_LEAK = re.compile(r"\bcode\b.{0,40}\b\d{4}\b", re.IGNORECASE)
@@ -131,7 +133,9 @@ def _extract_json(text):
 
 
 def _call_with_retry(messages):
-    """API call with 3-attempt exponential backoff. Returns response or raises."""
+    """API call, 3 attempts with exponential backoff on retryable errors only.
+    Non-retryable errors (auth, bad request) propagate immediately."""
+    last_error = None
     for attempt in range(3):
         try:
             return client.messages.create(
@@ -139,31 +143,46 @@ def _call_with_retry(messages):
                 max_tokens=600, temperature=0,
                 system=SYSTEM_PROMPT, tools=TOOLS, messages=messages,
             )
-        except Exception:
+        except RETRYABLE_ERRORS as e:
+            last_error = e
             time.sleep(2 ** attempt)
-    raise RuntimeError("API failed after 3 retries")
+    raise RuntimeError("API failed after 3 retries") from last_error
 
 
-def _run_tool(name, args):
+def _fail_safe(reason):
+    """Escalation result for internal failures — the agent fails closed, never silently."""
+    return {"intent": "escalate_only", "confidence": 0.0, "should_escalate": True,
+            "draft_response": "", "sources_used": [f"fail_safe: {reason}"],
+            "steps_taken": [f"{reason} — escalated"]}
+
+
+def _run_tool(name, args, state):
     """Dispatch one tool call. Returns (result_text, released_codes)."""
     if name == "get_property":
         return format_for_prompt(get_property(args["name"])), False
     if name == "verify_booking":
-        return verify_booking(args["booking_id"], args["guest_last_name"]), False
+        status, verified_property = verify_booking(args["booking_id"], args["guest_last_name"])
+        if status == "confirmed":
+            state["verified_property"] = verified_property
+        return status, False
     if name == "get_access_codes":
+        # codes are bound to the verified booking's property in code,
+        # not by trusting the model to pass the right name
+        if args["name"] != state["verified_property"]:
+            return "codes withheld: no confirmed booking for this property", False
         codes = get_access_codes(args["name"])
         return (str(codes) if codes else "no codes available"), bool(codes)
     return f"unknown tool: {name}", False
 
 
-def _process_tool_calls(response, messages):
+def _process_tool_calls(response, messages, state):
     """Run every tool_use block. Mutates messages. Returns (names, any_codes_released)."""
     tool_results, names, codes_released = [], [], False
     for block in response.content:
         if block.type != "tool_use":
             continue
         names.append(block.name)
-        result_text, released = _run_tool(block.name, block.input)
+        result_text, released = _run_tool(block.name, block.input, state)
         codes_released = codes_released or released
         tool_results.append({"type": "tool_result", "tool_use_id": block.id, "content": result_text})
     messages.append({"role": "assistant", "content": response.content})
@@ -172,18 +191,21 @@ def _process_tool_calls(response, messages):
 
 
 def _extract_final(response, codes_released):
-    """Find the text block and return the guarded result dict, or None."""
+    """Find the text block and return the guarded result dict. Fails closed."""
     for block in response.content:
         if block.type == "text":
-            return _guard(json.loads(_extract_json(block.text)), codes_released)
-    return None
+            try:
+                result = json.loads(_extract_json(block.text))
+            except json.JSONDecodeError:
+                return _fail_safe("unparseable model output")
+            return _guard(result, codes_released)
+    return _fail_safe("no text block in final response")
 
 
 def handle_message(guest_message, conversation_id=None):
     """Run the agent on one guest message. Returns a decision dict with intent, escalate, draft, and _usage."""
     if not guest_message or not guest_message.strip() or len(guest_message) > 4000:
-        result = {"intent": "escalate_only", "should_escalate": True, "draft_response": "",
-                  "sources_used": ["input_guard"], "steps_taken": ["bad input — escalated"]}
+        result = _fail_safe("input_guard: empty or oversized message")
         log_event(guest_message or "", result, [], 0, False)
         return result
 
@@ -191,6 +213,7 @@ def handle_message(guest_message, conversation_id=None):
     messages = history + [{"role": "user", "content": guest_message}]
     tools_used, iterations, codes_released = [], 0, False
     input_tokens, output_tokens = 0, 0
+    state = {"verified_property": None}
 
     for _ in range(5):
         iterations += 1
@@ -199,24 +222,22 @@ def handle_message(guest_message, conversation_id=None):
         output_tokens += response.usage.output_tokens
 
         if response.stop_reason == "tool_use":
-            names, released = _process_tool_calls(response, messages)
+            names, released = _process_tool_calls(response, messages, state)
             tools_used.extend(names)
             codes_released = codes_released or released
             continue
 
         result = _extract_final(response, codes_released)
-        if result is not None:
-            if conversation_id:
-                save_turn(conversation_id, "user", guest_message)
-                save_turn(conversation_id, "assistant", json.dumps(result))
-            result["_usage"] = {"input_tokens": input_tokens, "output_tokens": output_tokens}
-            log_event(guest_message, result, tools_used, iterations, codes_released)
-            return result
-        result = {"_usage": {"input_tokens": input_tokens, "output_tokens": output_tokens}}
-        log_event(guest_message, result, tools_used, iterations, codes_released)
-        return result
+        break
+    else:
+        result = _fail_safe("exceeded max tool-call iterations")
 
-    raise RuntimeError("Agent exceeded max tool-call iterations")
+    if conversation_id:
+        save_turn(conversation_id, "user", guest_message)
+        save_turn(conversation_id, "assistant", json.dumps(result))
+    result["_usage"] = {"input_tokens": input_tokens, "output_tokens": output_tokens}
+    log_event(guest_message, result, tools_used, iterations, codes_released)
+    return result
 
 
 if __name__ == "__main__":
