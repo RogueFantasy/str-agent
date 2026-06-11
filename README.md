@@ -57,7 +57,7 @@ Requires Python 3.11+, PostgreSQL, and an Anthropic API key.
 ```bash
 git clone <repo-url> && cd str-agent
 python -m venv venv && source venv/bin/activate
-pip install anthropic "psycopg[binary]" python-dotenv mcp
+pip install -r requirements.txt
 
 cat > .env <<'EOF'
 ANTHROPIC_API_KEY=sk-ant-...
@@ -65,55 +65,10 @@ DATABASE_URL=postgresql://user:pass@localhost/str_agent
 EOF
 ```
 
-Create the schema and demo properties (the repo has no migration tooling yet — this is the whole schema):
+Create the schema and demo properties (tables + three demo property rows; bookings are seeded separately so dates stay relative to today):
 
-```sql
-CREATE TABLE properties (
-  name TEXT PRIMARY KEY,
-  check_in_time TEXT, check_out_time TEXT,
-  wifi_name TEXT, wifi_password TEXT,
-  parking_info TEXT, pet_policy TEXT, amenities TEXT, supply_policy TEXT,
-  door_code TEXT, building_code TEXT
-);
-
-CREATE TABLE bookings (
-  booking_id TEXT PRIMARY KEY,
-  guest_last_name TEXT NOT NULL,
-  property_name TEXT NOT NULL REFERENCES properties(name),
-  check_in_date DATE NOT NULL, check_out_date DATE NOT NULL,
-  status TEXT NOT NULL
-);
-
-CREATE TABLE agent_log (
-  id SERIAL PRIMARY KEY, ts TIMESTAMP NOT NULL DEFAULT now(),
-  guest_message TEXT NOT NULL, intent TEXT, should_escalate BOOLEAN,
-  draft_response TEXT, tools_used TEXT, iterations INTEGER, codes_released BOOLEAN
-);
-
-CREATE TABLE conversations (
-  id SERIAL PRIMARY KEY,
-  conversation_id TEXT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL,
-  ts TIMESTAMP NOT NULL DEFAULT now()
-);
-CREATE INDEX idx_conversations_id_ts ON conversations (conversation_id, ts);
-
-INSERT INTO properties VALUES
-('Pelican Beach 1006', '4:00 PM', '10:00 AM', 'Pelican-Guest-1006', 'Sunset2024',
- 'Garage level P2, spot 1006. One pass per unit included.',
- 'No pets. Service animals only with documentation.',
- 'Full kitchen with washer/dryer, coffee maker, beach chairs, gulf-front balcony, sleeps 6 (king, queen, queen pull-out).',
- 'Starter supplies only (toilet paper, paper towels, soap). No mid-stay restocking. Nearest store: Publix at Destin Commons, 10 min drive.',
- '4218', '9135'),
-('Pelican Beach 707', '4:00 PM', '10:00 AM', 'Pelican-Guest-707', 'Sunset2024',
- 'Garage level P1, spot 707. One pass per unit included.',
- 'Small dogs under 25 lbs welcome with $150 non-refundable pet fee. Max 1 dog.',
- 'Full kitchen with washer/dryer, coffee maker, beach chairs, gulf-front balcony, sleeps 4 (king, queen).',
- 'Starter supplies only. No mid-stay restocking. Nearest store: Publix at Destin Commons, 10 min drive.',
- '7707', '9135'),
-('Okaloosa 3BR', '4:00 PM', '10:00 AM', 'OkaloosaWiFi', 'Beach2024',
- 'Driveway parking for 2 cars.', 'No pets.',
- '3 bedrooms, full kitchen, washer/dryer.', 'Starter supplies only.',
- '3301', NULL);
+```bash
+psql "$DATABASE_URL" -f schema.sql
 ```
 
 Then:
@@ -143,4 +98,4 @@ These were considered and cut, not overlooked. Each stays out until the eval set
 
 - **Property resolver.** Messages arrive with a `[Booking: <property name>]` prefix, mirroring how a rental platform delivers messages already attached to a listing — so the agent never guesses which property a guest means. Fuzzy resolution from free text ("the beachfront condo") is a real problem, but solving it before having real inbound message data would be guessing at the input distribution.
 
-Known gaps that are *debt*, not deferral: no `schema.sql`/migrations in the repo (schema lives in this README), no `requirements.txt`, and `conversations` memory isn't used by the eval set yet.
+Known gaps that are *debt*, not deferral: no migration tooling (`schema.sql` is create-only, no versioning), and `conversations` memory isn't used by the eval set yet.
