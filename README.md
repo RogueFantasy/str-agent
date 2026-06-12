@@ -60,7 +60,7 @@ python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 
 cat > .env <<'EOF'
-ANTHROPIC_API_KEY=sk-ant-...
+ANTHROPIC_API_KEY=<your-api-key>
 DATABASE_URL=postgresql://user:pass@localhost/str_agent
 EOF
 ```
